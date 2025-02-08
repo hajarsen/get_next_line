@@ -1,3 +1,4 @@
+#include "get_next_line.h"
 
 static void free_null(char **ptr)
 {
