@@ -89,7 +89,6 @@ char *get_next_line(int fd)
         }
     }
     
-    // Lit la ligne et nettoie le buffer temporaire
     res = read_line(fd, &buffer[fd], read_return);
     free_null(&read_return);
     return (res);
