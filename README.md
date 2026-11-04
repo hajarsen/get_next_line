@@ -4,15 +4,15 @@
 
 ## Description
 
-**get_next_line** is a C project that implements a function for reading a file descriptor **one line at a time**. It introduces low-level file I/O with `read()`, persistent state between function calls, dynamic memory allocation, and string manipulation.
+**get_next_line** is a C project that implements a function to read a file descriptor **one line at a time**. It covers low-level input with `read()`, dynamic memory allocation, string manipulation, and preserving unread data between function calls.
 
-Each call to `get_next_line(int fd)` returns the next available line, including the newline character when one is present. It returns `NULL` at end-of-file or on failure. The caller is responsible for freeing the returned string.
+`get_next_line(int fd)` returns the next line, including its terminating newline when present. It returns `NULL` at end-of-file or on error. **The caller must free each returned line.**
 
 ## Instructions
 
 ### Compilation
 
-The repository contains separate mandatory and bonus implementations. Compile either version with a C compiler; no Makefile is required.
+Compile the mandatory or bonus implementation with a C compiler. The repository does not require a Makefile.
 
 **Mandatory:**
 
@@ -28,11 +28,11 @@ cc -Wall -Wextra -Werror -D BUFFER_SIZE=42 \
   main.c get_next_line_bonus.c get_next_line_utils_bonus.c -o gnl
 ```
 
-`BUFFER_SIZE` controls how many bytes are requested in each `read()` call, not the maximum length of a line.
+These commands assume you have created a `main.c` that calls `get_next_line()`. Use `get_next_line_bonus.h` with the bonus version.
 
-### Using get_next_line
+### Usage Example
 
-A minimal example of reading a text file:
+The following program reads a text file until the end of input:
 
 ```c
 #include "get_next_line.h"
@@ -58,62 +58,55 @@ int main(void)
 }
 ```
 
-The example is for the mandatory version. To use the bonus version, include `get_next_line_bonus.h` instead.
-
 ### Mandatory and Bonus
 
-- **Mandatory:** Reads successive lines and retains unread data in a static array indexed by file descriptor, bounded by `MAX_FD`.
-- **Bonus:** Uses a linked list to associate buffered data with each active file descriptor. Its buffer grows as needed rather than relying on a fixed descriptor-indexed array.
+- **Mandatory:** The original implementation maintains persistent buffers in a static array indexed by file descriptor. Its supported descriptor range is limited by `MAX_FD` (256 by default).
+- **Bonus:** A linked list maintains an independent state for each file descriptor, using dynamically growing buffers to preserve unread input.
 
-The original `get_next_line_utilis.c` is preserved, while `get_next_line_utils.c` contains the same functions under the standard filename expected by external testers. **Compile only one of these two utility files**, as they define identical symbols.
+The original `get_next_line_utilis.c` remains in the repository. `get_next_line_utils.c` is a byte-identical copy under the filename expected by common 42 testers. Compile **only one** of the two utilities files, since both define the same functions.
 
 ## Resources
 
-### File Descriptors and read()
+### File Descriptors and `read()`
 
-A **file descriptor** is an integer used by the operating system to identify an open file, pipe, or other input source. The `read()` system call attempts to retrieve up to a specified number of bytes.
+A **file descriptor** identifies an open input source, such as a file, pipe, or standard input. The `read()` system call reads **up to** a requested number of bytes; it does not guarantee a complete line in one call.
 
-| `read()` result | Meaning |
+| Return value | Meaning |
 |---|---|
-| Positive value | Number of bytes successfully read |
+| Positive integer | Bytes successfully read |
 | `0` | End-of-file |
-| `-1` | Read error |
+| `-1` | Error |
 
-A single `read()` call does not necessarily return a complete line. The function must accumulate data until it encounters a newline or reaches the end of the input.
+The compile-time macro `BUFFER_SIZE` specifies how many bytes are requested per `read()` call. **It is not the maximum length of a line.**
 
-### Buffering and Line Boundaries
+### Buffering Across Calls
 
-Consider a file containing `hello\nworld`, read with `BUFFER_SIZE=4`:
+For a file containing `hello\nworld`, with `BUFFER_SIZE=4`:
 
 ```text
-File contents:     hello\nworld
-First read:        "hell"
-Second read:       "o\nwo"
-First line:        "hello\n"
-Unread remainder:  "wo"
-Next read:         "rld"
-Second line:       "world"
+Read 1: "hell"
+Read 2: "o\nwo"   → return "hello\n"
+Unread: "wo"
+Read 3: "rld"     → return "world" at EOF
 ```
 
-The unread remainder must be preserved for the next call. The newline belongs to the returned line; a final line without `\n` is still returned.
+The characters after `\n` must remain available to the next call. A final line without a newline is returned as well.
 
-### Persistent State
+### Persistent State and Memory Ownership
 
-A local variable disappears when a function returns, but `get_next_line()` needs to remember bytes that have been read but not yet returned. **Static storage** makes that state available across calls.
+A regular local buffer does not survive a function return. **Static storage** makes it possible to retain unread bytes between calls. The mandatory implementation uses a descriptor-indexed array; the bonus implementation associates its buffer with a descriptor in a linked list.
 
-The mandatory implementation stores a buffer for each permitted descriptor. The bonus version uses dynamically allocated nodes to track active descriptors and their remaining content.
+Each returned line belongs to the caller, who must release it using `free()`. The implementation manages its own internal buffers independently.
 
-### Memory Management
+### Performance Considerations
 
-Every non-`NULL` line is allocated on the heap and must be released by the caller with `free()`. Internal buffers also require cleanup when reading finishes or an error occurs. This separation of ownership prevents a returned line from being overwritten by subsequent calls.
+In the original mandatory implementation, each `ft_strjoin()` copies the accumulated string into a new allocation. Repeated concatenation can lead to **quadratic copying work** for long lines, particularly when `BUFFER_SIZE=1`.
 
-### Implementation Notes
-
-The original mandatory implementation builds longer strings through repeated concatenation. With a small `BUFFER_SIZE`, that means copying previously accumulated data again and again, which can be slow for very long lines. The bonus implementation instead uses a growing buffer to reduce unnecessary copying.
+The bonus implementation uses a growing buffer and offsets to reduce repeated copying. The original mandatory source files have been preserved unchanged.
 
 ### References
 
 - [`read(2)` — Linux manual](https://man7.org/linux/man-pages/man2/read.2.html)
 - [`open(2)` — Linux manual](https://man7.org/linux/man-pages/man2/open.2.html)
 - [`close(2)` — Linux manual](https://man7.org/linux/man-pages/man2/close.2.html)
-- [C dynamic memory management — cppreference](https://en.cppreference.com/w/c/memory)
+- [C memory management — cppreference](https://en.cppreference.com/w/c/memory)
