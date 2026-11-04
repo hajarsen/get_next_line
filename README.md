@@ -67,42 +67,316 @@ The original `get_next_line_utilis.c` remains in the repository. `get_next_line_
 
 ## Resources
 
-### File Descriptors and `read()`
+### 1. File Descriptors: Where the Bytes Come From
 
-A **file descriptor** identifies an open input source, such as a file, pipe, or standard input. The `read()` system call reads **up to** a requested number of bytes; it does not guarantee a complete line in one call.
+A **file descriptor (fd)** is a small integer that a process uses to refer to an open input/output resource. The operating system manages the underlying resource; the integer is the handle your C program passes to system calls.
 
-| Return value | Meaning |
+| File descriptor | Usual meaning |
 |---|---|
-| Positive integer | Bytes successfully read |
-| `0` | End-of-file |
-| `-1` | Error |
+| `0` | Standard input (`stdin`) |
+| `1` | Standard output (`stdout`) |
+| `2` | Standard error (`stderr`) |
+| `3`, `4`, ... | Other open files, pipes, sockets, etc. (numbers depend on the process) |
 
-The compile-time macro `BUFFER_SIZE` specifies how many bytes are requested per `read()` call. **It is not the maximum length of a line.**
+```text
+                     One process
+             +------------------------+
+             | File descriptor table  |
+keyboard --->| fd 0 : standard input |
+terminal <---| fd 1 : standard output|
+terminal <---| fd 2 : standard error |
+             | fd 3 : open file -----+----> file on disk
+             +------------------------+
 
-### Buffering Across Calls
+           fd = an integer, NOT a file path
+```
+
+**Important:** `get_next_line(fd)` does **not** open a file. It reads from an fd that the **caller already has**, whether the fd refers to a file, standard input, or a pipe.
+
+### 2. `open()`, `read()`, and `close()`
+
+These are low-level POSIX system interfaces declared through `<fcntl.h>` (for `open`) and `<unistd.h>` (for `read` and `close`).
+
+| Function | Purpose | Typical result |
+|---|---|---|
+| `open(path, flags)` | Open a file and obtain an fd | Nonnegative fd on success, `-1` on error |
+| `read(fd, buf, count)` | Request **up to** `count` bytes | Positive byte count, `0` for EOF, `-1` on error |
+| `close(fd)` | Release that process's descriptor | `0` on success, `-1` on error |
+
+The normal sequence when reading a regular file is:
+
+```text
+      "example.txt"
+            |
+            v
+   open("example.txt", O_RDONLY)
+            |
+            v
+       fd (e.g. 3)
+            |
+            v
+      get_next_line(fd)
+            |
+      calls read(fd, ...)
+            |
+       returns one line
+            |
+            v
+     caller uses + frees
+      the returned line
+            |
+       repeat until NULL
+            |
+            v
+         close(fd)
+```
+
+The caller is responsible for `open()` and `close()`; your `get_next_line()` implementation handles the internal `read()` calls.
+
+**What `read()` actually returns:**
+
+```c
+ssize_t n = read(fd, buffer, BUFFER_SIZE);
+
+if (n > 0)  /* n bytes received; may be fewer than BUFFER_SIZE */
+if (n == 0) /* end-of-file: no more bytes */
+if (n < 0)  /* read error */
+```
+
+- `read()` reads **bytes, not lines**. A single read may contain half a line, several lines, or just one byte.
+- A successful read is **not guaranteed to fill** the requested buffer.
+- On regular files, successive reads normally advance the file position; with pipes, bytes are consumed from a stream.
+- `read()` on a pipe may **block** until data is available or the writers have closed it.
+- `BUFFER_SIZE` is the requested chunk size, **not a maximum line length**.
+
+Your implementation uses `read()` in [`get_next_line.c`](get_next_line.c) and [`get_next_line_bonus.c`](get_next_line_bonus.c).
+
+### 3. How `get_next_line()` Builds a Line
+
+The function's responsibility is to return **one line per call**, including the newline (`\n`) when it exists. It must save any bytes *after* that newline for the next call.
+
+```text
+          get_next_line(fd)
+                 |
+                 v
+       Saved bytes contain '\n'?
+          /                \
+        yes                 no
+         |                   |
+         |           read(fd, chunk, BUFFER_SIZE)
+         |                   |
+         |           append bytes to saved buffer
+         |                   |
+         |              newline found?
+         |                /      \
+         |              no        yes
+         |              |          |
+         |          read again     |
+         +-------------------------+
+                 |
+                 v
+       Split at first newline
+            /          \
+           v            v
+    Return one line   Keep leftover
+    (caller frees)    for next call
+
+    EOF + leftover -> return final line without '\n'
+    EOF + no data  -> return NULL
+    read error     -> return NULL
+```
+
+The public API is:
+
+```c
+char *get_next_line(int fd);
+```
+
+The returned string is dynamically allocated. The caller must `free()` it after use; `NULL` signals end-of-input or an error (the interface does not distinguish them).
+
+### 4. Buffering Across Calls: Worked Example
 
 For a file containing `hello\nworld`, with `BUFFER_SIZE=4`:
 
 ```text
-Read 1: "hell"
-Read 2: "o\nwo"   → return "hello\n"
-Unread: "wo"
-Read 3: "rld"     → return "world" at EOF
+Underlying byte stream:
+h e l l o \n w o r l d
+|_____| |_____| |___|
+ read 1  read 2  read 3
+
+1) read -> "hell"     saved buffer: "hell"
+   No '\n' yet.
+
+2) read -> "o\nwo"    saved buffer: "hello\nwo"
+                              |
+                              +-- split here
+
+   get_next_line() returns "hello\n"
+   leftover saved for next call: "wo"
+
+3) Next get_next_line() call:
+   read -> "rld"      saved buffer: "world"
+   read -> 0 (EOF)
+   returns "world" (no trailing newline)
+
+4) Next call returns NULL.
 ```
 
-The characters after `\n` must remain available to the next call. A final line without a newline is returned as well.
+**Why not discard the remainder?** Because `read()` may receive bytes belonging to the *next* line. Those bytes have already been consumed from the file descriptor and cannot simply be read again.
 
-### Persistent State and Memory Ownership
+### 5. Pipes: One Process Sends Bytes, Another Reads Them
 
-A regular local buffer does not survive a function return. **Static storage** makes it possible to retain unread bytes between calls. The mandatory implementation uses a descriptor-indexed array; the bonus implementation associates its buffer with a descriptor in a linked list.
+A **pipe** is an operating-system-managed byte stream connecting a writer and a reader. It does **not** preserve line boundaries; `get_next_line()` finds the newlines itself.
 
-Each returned line belongs to the caller, who must release it using `free()`. The implementation manages its own internal buffers independently.
+When you run a shell command such as:
 
-### Performance Considerations
+```bash
+printf 'first\nsecond\n' | ./gnl_stdin
+```
 
-In the original mandatory implementation, each `ft_strjoin()` copies the accumulated string into a new allocation. Repeated concatenation can lead to **quadratic copying work** for long lines, particularly when `BUFFER_SIZE=1`.
+the shell connects the **standard output** of `printf` to the **standard input** of the reader program:
 
-The bonus implementation uses a growing buffer and offsets to reduce repeated copying. The original mandatory logic is retained.
+```text
+   Process A                       Kernel                       Process B
++--------------+               +---------------+             +----------------+
+| printf       |               |   PIPE        |             | gnl_stdin      |
+| stdout: fd 1 +-- write() --->| byte buffer   +-- read() -->| stdin: fd 0    |
+|              |               | first\nsecond\n|             | get_next_line(0)|
++--------------+               +---------------+             +----------------+
+                                         |
+                                         v
+                            read() supplies byte chunks,
+                            NOT complete lines
+```
+
+When every writer closes its end, the reader eventually gets `read() == 0` **after all buffered data has been consumed**. That is EOF for the pipe. Until then, an empty pipe with a writer still open can make `read()` wait.
+
+In C, `pipe(int pipefd[2])` creates **two** descriptors:
+
+```text
+pipe(pipefd)
+
+pipefd[1] (write end) -----> [ kernel pipe buffer ] -----> pipefd[0] (read end)
+    write(...)                                               read(...)
+    close(...)                                               close(...)
+```
+
+The shell's `|` operator uses this kind of connection and arranges the appropriate standard-input/output redirection.
+
+**Try it yourself:** save this minimal program as `pipe_demo.c` in your local project folder (this demo file is not included in the repository).
+
+```c
+#include "get_next_line.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void)
+{
+    char *line;
+
+    while ((line = get_next_line(0)) != NULL)
+    {
+        printf("%s", line);
+        free(line);
+    }
+    return (0);
+}
+```
+
+Compile and feed it from a pipe:
+
+```bash
+cc -Wall -Wextra -Werror -D BUFFER_SIZE=4 \
+  pipe_demo.c get_next_line.c get_next_line_utils.c -o gnl_stdin
+
+printf 'first\nsecond\n' | ./gnl_stdin
+```
+
+Expected output:
+
+```text
+first
+second
+```
+
+`0` is already an open standard-input descriptor, so the demo does not call `open()` or `close()`. It is only an illustration of the **pipe + get_next_line** workflow, not a separate feature implemented by the library.
+
+### 6. Key Functions in This Repository
+
+The **mandatory** version uses these functions to turn a byte stream into lines:
+
+| Function | Role in the implementation |
+|---|---|
+| [`get_next_line()`](get_next_line.c) | Entry point; retrieves the next line for one fd |
+| `read_line()` | Searches for a newline, reads more chunks if necessary |
+| `read_chunk()` | Calls `read()` and appends new bytes to the saved buffer |
+| `join_line()` | Splits a completed line from the unread remainder |
+| `free_null()` | Frees an internal buffer and clears its pointer |
+| [`ft_strchr()`](get_next_line_utils.c) | Finds a newline character |
+| `ft_strjoin()` | Concatenates saved bytes and the latest chunk |
+| `ft_substr()` | Extracts a line or the remaining bytes |
+| `ft_strdup()` | Creates an owned copy of a string |
+| `ft_strlen()` | Computes string length |
+
+`read_line()`, `read_chunk()`, `join_line()`, and `free_null()` are `static` helpers defined in [`get_next_line.c`](get_next_line.c). The string utilities live in [`get_next_line_utils.c`](get_next_line_utils.c).
+
+### 7. Persistent State: Mandatory vs Bonus
+
+A local variable disappears when its function returns. However, `get_next_line()` must remember unread bytes between calls. Both versions therefore use **static state**, but organize it differently.
+
+**Mandatory:** an array of buffer pointers, indexed by fd:
+
+```text
+static char *buffer[MAX_FD + 1];
+
+buffer[0]  ---> pending bytes from stdin
+buffer[3]  ---> pending bytes from file A
+buffer[4]  ---> pending bytes from file B
+   ...
+buffer[256] ---> last allowed index (default MAX_FD)
+```
+
+This design allows separate saved strings for different descriptors, but rejects any fd larger than `MAX_FD` (256 by default).
+
+**Bonus:** a linked list of descriptor-specific state, with a growable buffer:
+
+```text
+static head
+    |
+    v
+[fd=3 | data,start,end,capacity] --next-->
+[fd=5 | data,start,end,capacity] --next--> NULL
+```
+
+- `gnl_node()` finds or creates a descriptor entry.
+- `gnl_fill()` calls `read()` and appends incoming bytes.
+- `gnl_take_line()` copies one line and advances the start offset.
+- `gnl_remove()` cleans up an entry on EOF or error.
+- `gnl_append()` / `gnl_grow()` expand storage when needed.
+- `gnl_newline()` locates the newline within the current byte range.
+
+See [`get_next_line_bonus.c`](get_next_line_bonus.c) and [`get_next_line_utils_bonus.c`](get_next_line_utils_bonus.c).
+
+### 8. Memory and Performance
+
+A `get_next_line()` result belongs to the **caller**:
+
+```c
+char *line = get_next_line(fd);
+if (line)
+{
+    /* use line */
+    free(line);
+}
+```
+
+The internal saved buffer is separate from the returned line, so freeing one returned line does not discard the bytes needed by the next call.
+
+In the mandatory version, repeatedly calling `ft_strjoin()` copies all accumulated text into a new allocation. For a very long line (especially with `BUFFER_SIZE=1`), this can cause **quadratic copying work** in the line length.
+
+The bonus version uses a buffer with `start`, `end`, and `capacity` offsets and expands its capacity when needed. This reduces repeated copying of accumulated bytes.
+
+**Edge cases worth checking:** empty input, missing final newline, multiple consecutive newlines, very long lines, `BUFFER_SIZE=1`, invalid descriptors, and interleaved reads from two distinct fds.
 
 ### References
 
