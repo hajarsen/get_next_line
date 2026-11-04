@@ -76,7 +76,7 @@ A **file descriptor (fd)** is a small integer that a process uses to refer to an
 | `0` | Standard input (`stdin`) |
 | `1` | Standard output (`stdout`) |
 | `2` | Standard error (`stderr`) |
-| `3`, `4`, ... | Other open files, pipes, sockets, etc. (numbers depend on the process) |
+| `3`, `4`, ... | Other open files or input/output resources (numbers depend on the process) |
 
 ```text
                      One process
@@ -91,7 +91,7 @@ terminal <---| fd 2 : standard error |
            fd = an integer, NOT a file path
 ```
 
-**Important:** `get_next_line(fd)` does **not** open a file. It reads from an fd that the **caller already has**, whether the fd refers to a file, standard input, or a pipe.
+**Important:** `get_next_line(fd)` does **not** open a file. It reads from an fd that the **caller already has**, such as an open text file or standard input.
 
 ### 2. `open()`, `read()`, and `close()`
 
@@ -145,8 +145,7 @@ if (n < 0)  /* read error */
 
 - `read()` reads **bytes, not lines**. A single read may contain half a line, several lines, or just one byte.
 - A successful read is **not guaranteed to fill** the requested buffer.
-- On regular files, successive reads normally advance the file position; with pipes, bytes are consumed from a stream.
-- `read()` on a pipe may **block** until data is available or the writers have closed it.
+- On regular files, successive reads normally advance the current file position.
 - `BUFFER_SIZE` is the requested chunk size, **not a maximum line length**.
 
 Your implementation uses `read()` in [`get_next_line.c`](get_next_line.c) and [`get_next_line_bonus.c`](get_next_line_bonus.c).
@@ -224,84 +223,7 @@ h e l l o \n w o r l d
 
 **Why not discard the remainder?** Because `read()` may receive bytes belonging to the *next* line. Those bytes have already been consumed from the file descriptor and cannot simply be read again.
 
-### 5. Pipes: One Process Sends Bytes, Another Reads Them
-
-A **pipe** is an operating-system-managed byte stream connecting a writer and a reader. It does **not** preserve line boundaries; `get_next_line()` finds the newlines itself.
-
-When you run a shell command such as:
-
-```bash
-printf 'first\nsecond\n' | ./gnl_stdin
-```
-
-the shell connects the **standard output** of `printf` to the **standard input** of the reader program:
-
-```text
-   Process A                       Kernel                       Process B
-+--------------+               +---------------+             +----------------+
-| printf       |               |   PIPE        |             | gnl_stdin      |
-| stdout: fd 1 +-- write() --->| byte buffer   +-- read() -->| stdin: fd 0    |
-|              |               | first\nsecond\n|             | get_next_line(0)|
-+--------------+               +---------------+             +----------------+
-                                         |
-                                         v
-                            read() supplies byte chunks,
-                            NOT complete lines
-```
-
-When every writer closes its end, the reader eventually gets `read() == 0` **after all buffered data has been consumed**. That is EOF for the pipe. Until then, an empty pipe with a writer still open can make `read()` wait.
-
-In C, `pipe(int pipefd[2])` creates **two** descriptors:
-
-```text
-pipe(pipefd)
-
-pipefd[1] (write end) -----> [ kernel pipe buffer ] -----> pipefd[0] (read end)
-    write(...)                                               read(...)
-    close(...)                                               close(...)
-```
-
-The shell's `|` operator uses this kind of connection and arranges the appropriate standard-input/output redirection.
-
-**Try it yourself:** save this minimal program as `pipe_demo.c` in your local project folder (this demo file is not included in the repository).
-
-```c
-#include "get_next_line.h"
-#include <stdio.h>
-#include <stdlib.h>
-
-int main(void)
-{
-    char *line;
-
-    while ((line = get_next_line(0)) != NULL)
-    {
-        printf("%s", line);
-        free(line);
-    }
-    return (0);
-}
-```
-
-Compile and feed it from a pipe:
-
-```bash
-cc -Wall -Wextra -Werror -D BUFFER_SIZE=4 \
-  pipe_demo.c get_next_line.c get_next_line_utils.c -o gnl_stdin
-
-printf 'first\nsecond\n' | ./gnl_stdin
-```
-
-Expected output:
-
-```text
-first
-second
-```
-
-`0` is already an open standard-input descriptor, so the demo does not call `open()` or `close()`. It is only an illustration of the **pipe + get_next_line** workflow, not a separate feature implemented by the library.
-
-### 6. Key Functions in This Repository
+### 5. Key Functions in This Repository
 
 The **mandatory** version uses these functions to turn a byte stream into lines:
 
@@ -320,7 +242,7 @@ The **mandatory** version uses these functions to turn a byte stream into lines:
 
 `read_line()`, `read_chunk()`, `join_line()`, and `free_null()` are `static` helpers defined in [`get_next_line.c`](get_next_line.c). The string utilities live in [`get_next_line_utils.c`](get_next_line_utils.c).
 
-### 7. Persistent State: Mandatory vs Bonus
+### 6. Persistent State: Mandatory vs Bonus
 
 A local variable disappears when its function returns. However, `get_next_line()` must remember unread bytes between calls. Both versions therefore use **static state**, but organize it differently.
 
@@ -357,7 +279,7 @@ static head
 
 See [`get_next_line_bonus.c`](get_next_line_bonus.c) and [`get_next_line_utils_bonus.c`](get_next_line_utils_bonus.c).
 
-### 8. Memory and Performance
+### 7. Memory and Performance
 
 A `get_next_line()` result belongs to the **caller**:
 
