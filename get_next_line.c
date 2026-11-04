@@ -1,96 +1,109 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   get_next_line.c                                    :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: hsennane <hajarsennane1@gmail.com>         +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2025/02/08 17:12:44 by hsennane          #+#    #+#             */
+/*   Updated: 2026/11/04 01:30:00 by hsennane         ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
 #include "get_next_line.h"
 
-static void free_null(char **ptr)
+static void	free_null(char **ptr)
 {
-    if (ptr && *ptr)
-    {
-        free(*ptr);
-        *ptr = NULL;
-    }
+	if (ptr && *ptr)
+	{
+		free(*ptr);
+		*ptr = NULL;
+	}
 }
 
-
-static char *join_line(int nl_position, char **buffer)
+static char	*join_line(int pos, char **buffer)
 {
-    char *res;
-    char *tmp;
-    if (nl_position <= 0)  
-    {
-        if (!*buffer || **buffer == '\0')
-        {
-            free_null(buffer);
-            return (NULL);
-        }
-        res = *buffer;
-        *buffer = NULL;
-        return (res);
-    }
-   
-    tmp = ft_substr(*buffer, nl_position, ft_strlen(*buffer) - nl_position);
-    res = ft_substr(*buffer, 0, nl_position);
-    free_null(buffer);
-    *buffer = tmp;
-    return (res);
+	char	*res;
+	char	*tmp;
+
+	if (pos <= 0)
+	{
+		if (!*buffer || **buffer == '\0')
+		{
+			free_null(buffer);
+			return (NULL);
+		}
+		res = *buffer;
+		*buffer = NULL;
+		return (res);
+	}
+	tmp = ft_substr(*buffer, pos, ft_strlen(*buffer) - pos);
+	res = ft_substr(*buffer, 0, pos);
+	free_null(buffer);
+	*buffer = tmp;
+	return (res);
 }
 
-
-static char *read_line(int fd, char **buffer, char *read_return)
+static int	read_chunk(int fd, char **buffer, char *chunk)
 {
-    ssize_t bytes_read;
-    char *tmp;
-    char *nl;
-    nl = ft_strchr(*buffer, '\n');
-    while (nl == NULL)  
-    {
-        bytes_read = read(fd, read_return, BUFFER_SIZE);
-        if (bytes_read < 0)  
-        {
-            free_null(buffer);
-            return (NULL);
-        }
-        if (bytes_read == 0)  
-            return (join_line(bytes_read, buffer));
-        read_return[bytes_read] = '\0';
-        tmp = ft_strjoin(*buffer, read_return);
-        free_null(buffer);
-        if (!tmp)
-            return (NULL);
-        *buffer = tmp;
-        nl = ft_strchr(*buffer, '\n');
-    }
-    return (join_line(nl - *buffer + 1, buffer));
+	ssize_t	bytes_read;
+	char	*tmp;
+
+	bytes_read = read(fd, chunk, BUFFER_SIZE);
+	if (bytes_read <= 0)
+		return ((int)bytes_read);
+	chunk[bytes_read] = '\0';
+	tmp = ft_strjoin(*buffer, chunk);
+	free_null(buffer);
+	if (!tmp)
+		return (-1);
+	*buffer = tmp;
+	return (1);
 }
 
-
-char *get_next_line(int fd)
+static char	*read_line(int fd, char **buffer, char *chunk)
 {
-    static char *buffer[MAX_FD + 1];  
-    char *read_return;
-    char *res;
-    
+	char	*nl;
+	int		status;
 
-    if (fd < 0 || BUFFER_SIZE <= 0 || fd > MAX_FD)
-        return (NULL);
-    
+	nl = ft_strchr(*buffer, '\n');
+	while (!nl)
+	{
+		status = read_chunk(fd, buffer, chunk);
+		if (status < 0)
+		{
+			free_null(buffer);
+			return (NULL);
+		}
+		if (status == 0)
+			return (join_line(0, buffer));
+		nl = ft_strchr(*buffer, '\n');
+	}
+	return (join_line(nl - *buffer + 1, buffer));
+}
 
-    read_return = (char *)malloc(sizeof(char) * (BUFFER_SIZE + 1));
-    if (!read_return)
-    {
-        free_null(&buffer[fd]);
-        return (NULL);
-    }
-    
-    if (!buffer[fd])
-    {
-        buffer[fd] = ft_strdup("");
-        if (!buffer[fd])
-        {
-            free_null(&read_return);
-            return (NULL);
-        }
-    }
-    
-    res = read_line(fd, &buffer[fd], read_return);
-    free_null(&read_return);
-    return (res);
+char	*get_next_line(int fd)
+{
+	static char	*buffer[MAX_FD + 1];
+	char		*chunk;
+	char		*line;
+
+	if (fd < 0 || BUFFER_SIZE <= 0 || fd > MAX_FD)
+		return (NULL);
+	chunk = malloc((size_t)BUFFER_SIZE + 1);
+	if (!chunk)
+	{
+		free_null(&buffer[fd]);
+		return (NULL);
+	}
+	if (!buffer[fd])
+		buffer[fd] = ft_strdup("");
+	if (!buffer[fd])
+	{
+		free(chunk);
+		return (NULL);
+	}
+	line = read_line(fd, &buffer[fd], chunk);
+	free(chunk);
+	return (line);
 }

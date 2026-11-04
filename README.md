@@ -102,7 +102,7 @@ Each returned line belongs to the caller, who must release it using `free()`. Th
 
 In the original mandatory implementation, each `ft_strjoin()` copies the accumulated string into a new allocation. Repeated concatenation can lead to **quadratic copying work** for long lines, particularly when `BUFFER_SIZE=1`.
 
-The bonus implementation uses a growing buffer and offsets to reduce repeated copying. The original mandatory source files have been preserved unchanged.
+The bonus implementation uses a growing buffer and offsets to reduce repeated copying. The original mandatory logic is retained.
 
 ### References
 

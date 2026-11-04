@@ -1,3 +1,15 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   get_next_line_bonus.c                              :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: hsennane <hajarsennane1@gmail.com>         +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2026/11/04 01:17:35 by hsennane          #+#    #+#             */
+/*   Updated: 2026/11/04 01:30:00 by hsennane         ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
 #include "get_next_line_bonus.h"
 
 static char	*gnl_take_line(t_gnl_buffer *buf)
@@ -15,9 +27,12 @@ static char	*gnl_take_line(t_gnl_buffer *buf)
 	line = malloc(n + 1);
 	if (!line)
 		return (NULL);
-	i = n;
-	while (i-- > 0)
+	i = 0;
+	while (i < n)
+	{
 		line[i] = buf->data[buf->start + i];
+		i++;
+	}
 	line[n] = '\0';
 	buf->start += n;
 	if (buf->start == buf->end)
@@ -25,7 +40,7 @@ static char	*gnl_take_line(t_gnl_buffer *buf)
 	return (line);
 }
 
-static t_gnl_fd	*gnl_node(t_gnl_fd **head, int fd, int create)
+static t_gnl_fd	*gnl_node(t_gnl_fd **head, int fd)
 {
 	t_gnl_fd	*node;
 
@@ -36,8 +51,6 @@ static t_gnl_fd	*gnl_node(t_gnl_fd **head, int fd, int create)
 			return (node);
 		node = node->next;
 	}
-	if (!create)
-		return (NULL);
 	node = malloc(sizeof(t_gnl_fd));
 	if (!node)
 		return (NULL);
@@ -100,12 +113,12 @@ char	*get_next_line(int fd)
 
 	if (fd < 0 || BUFFER_SIZE <= 0)
 		return (NULL);
-	node = gnl_node(&head, fd, 1);
+	node = gnl_node(&head, fd);
 	if (!node)
 		return (NULL);
-	if (read(fd, NULL, 0) < 0 || ((!node->buf.data ||
-			!gnl_newline(node->buf.data + node->buf.start,
-				node->buf.end - node->buf.start))
+	if (read(fd, NULL, 0) < 0 || ((!node->buf.data
+				|| !gnl_newline(node->buf.data + node->buf.start,
+					node->buf.end - node->buf.start))
 			&& !gnl_fill(fd, &node->buf)))
 	{
 		gnl_remove(&head, node);

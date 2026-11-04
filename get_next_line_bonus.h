@@ -1,3 +1,15 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   get_next_line_bonus.h                              :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: hsennane <hajarsennane1@gmail.com>         +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2026/11/04 01:17:35 by hsennane          #+#    #+#             */
+/*   Updated: 2026/11/04 01:30:00 by hsennane         ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
 #ifndef GET_NEXT_LINE_BONUS_H
 # define GET_NEXT_LINE_BONUS_H
 
@@ -14,14 +26,14 @@ typedef struct s_gnl_buffer
 	size_t	start;
 	size_t	end;
 	size_t	capacity;
-} t_gnl_buffer;
+}	t_gnl_buffer;
 
 typedef struct s_gnl_fd
 {
 	int				fd;
-	t_gnl_buffer		buf;
+	t_gnl_buffer	buf;
 	struct s_gnl_fd	*next;
-} t_gnl_fd;
+}	t_gnl_fd;
 
 char	*get_next_line(int fd);
 size_t	gnl_newline(const char *str, size_t len);
